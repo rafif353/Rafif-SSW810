@@ -11,6 +11,7 @@ class Student:
         self.CWID = CWID
         self.name = name
         self.major = major
+        
         """ used defaultdict to store taken courses of each student associated with their grades, 
             where course is the key and grade is the value
         """
@@ -21,40 +22,64 @@ class Student:
         self.taken_courses[course] = grade
         return self.taken_courses
         
-    def get_values(self):
-        d = dict()
-        d['Name'] = self.name
-        d['Major'] = self.major
-        d['Taken Courses'] = self.taken_courses
-        return d
-            
+    def completed_courses(self):
+        #return completed courses for each student
+        valid_grade = ['A', 'A-', 'B+', 'B', 'B-', 'C+', 'C']
+        return [course for course, grade in self.taken_courses.items() if grade in valid_grade]
+                
 class Instructor:
     def __init__(self, CWID, name, department):
         """store instructor details"""
         self.CWID = CWID
         self.name = name
         self.department = department
+        
         """ used defaultdict to store taught courses of each instructor associated with 
             num of students in each course, where course is the key and #stds is the value
         """
-        self.taught_courses = defaultdict(int) 
-        
-    def get_values(self):
-        d = dict()
-        d['Name'] = self.name
-        d['Department'] = self.department
-        d['Taught Courses'] = self.taught_courses
-        return d  
+        self.taught_courses = defaultdict(int)  
     
     def inst_course(self, course):
         #Store course and number of students taught by each instructor
         self.taught_courses[course] += 1
         return self.taught_courses
         
+class Major:
+    def __init__(self, major, flag, course):
+        """store major details"""
+        self.major = major
+        self.flag = flag
+        self.course = course
+
+        """ used dictionary to store the flag (required or electives)
+            as a key and course as a value
+        """
+        self.courses = defaultdict(set)
+        self.add_course(flag, course)
+        
+        """ used dictionary to store the remaining required as 'R' and electives as 'E'
+            as a keys and course as a value
+        """
+        self.remaining = defaultdict(set)
+        
+    def add_course(self, flag, course):
+        #Add courses in dictionary
+        self.courses[flag].add(course)
+        return self.courses
+    
+    def remaining_courses(self, completed_courses):
+        #return remaining required and electives courses for each student based on major 
+        remaining_required = self.courses['R'] - set(completed_courses)
+        remaining_electives = ['' if set(completed_courses).intersection(self.courses['E']) else self.courses['E']]
+        self.remaining['R'] = remaining_required
+        self.remaining['E'] = remaining_electives
+        return self.remaining
+                        
 class Repository:
     def __init__(self):
         self.std_db = dict() 
         self.inst_db = dict()
+        self.major_db = dict()
         self.path = '/Users/rafifarab/Desktop/Stevens/Fall 2017/SSW 810'
         
         #Read Students file
@@ -82,29 +107,46 @@ class Repository:
                 self.inst_db[i_cwid].inst_course(course)
             else:
                 print('Course for unknown instructor', i_cwid)
-            
+        
+        #Read Majors file
+        major_file = os.path.join(self.path, 'majors.txt')
+        reader = FileReader(major_file, 3)
+        for major, flag, course in reader.next():
+            if major in self.major_db:
+                self.major_db[major].add_course(flag, course)
+            else:
+                self.major_db[major] = Major(major, flag, course)
+   
+    def major_table(self):
+       #Print major table
+        self.major_table = PrettyTable(['Dept', 'Required', 'Electives'])
+        for major in self.major_db.values():
+            self.major_table.add_row([major.major, sorted(major.courses['R']), sorted(major.courses['E'])])
+        print(self.major_table)
+
     def student_table(self):
         #Print student table
-        self.std_table = PrettyTable(['CWID', 'Name', 'Course'])
-        for cwid, val in sorted(self.std_db.items()):
-            get_val = val.get_values()
-            key = sorted(list(get_val['Taken Courses'].keys()))
-            self.std_table.add_row([cwid, get_val['Name'], key])
+        self.std_table = PrettyTable(['CWID', 'Name', 'Major', 'Completed Courses', 'Remaining Required', 'Remaining Electives'])
+        for student in self.std_db.values(): 
+            self.major_db[student.major].remaining_courses(student.completed_courses())
+            self.std_table.add_row([student.CWID, student.name, student.major,sorted(student.completed_courses()), 
+                                    sorted(self.major_db[student.major].remaining['R']), sorted(self.major_db[student.major].remaining['E'])])
         print(self.std_table)
  
     def instructor_table(self):
         #Print instructor table
         self.inst_table = PrettyTable(['CWID', 'Name','Dept', 'Course', 'Student'])
-        for cwid, val in sorted(self.inst_db.items()):
-            get_val = val.get_values()
-            for course, num_std in get_val['Taught Courses'].items():
-                self.inst_table.add_row([cwid, get_val['Name'], get_val['Department'], course, num_std])
+        for instructor in self.inst_db.values():
+            for course in instructor.taught_courses.keys():
+                self.inst_table.add_row([instructor.CWID, instructor.name, instructor.department, course, 
+                                        instructor.taught_courses[course]])
         print(self.inst_table)
                            
 class FileReader():
-    def __init__(self, fname, num_of_args, sep='\t'):
+    #Responsible for reading file
+    def __init__(self, fname, num_of_fields, sep='\t'):
       self.fname = fname
-      self.num_of_args = num_of_args
+      self.num_of_fields = num_of_fields
       self.sep = sep
       
       try:
@@ -113,10 +155,11 @@ class FileReader():
         raise FileNotFoundError(self.fname, 'cannot be opened')
         
     def next(self):
+        #return each line in a file at a time (whenever called)
         with self.f:
             for row in self.f:
                 line = row.strip().split(self.sep)
-                if len(line) == self.num_of_args:
+                if len(line) == self.num_of_fields:
                     yield line 
                 else:
                     raise Exception(self.fname + ' should have ' + str(len(line)) + ' values') 
@@ -130,6 +173,9 @@ def main():
     
     print('\nInstructor Summary')
     r.instructor_table()
+    
+    print('\nMajor Summary')
+    r.major_table()
         
 class StudentTest(unittest.TestCase):
     student = Student('104111', 'Rafif, A', 'SSW')
@@ -138,11 +184,9 @@ class StudentTest(unittest.TestCase):
         self.assertEqual(StudentTest.student.name, 'Rafif, A')
         self.assertEqual(StudentTest.student.major, 'SSW')
         
-    def test_get_values_and_std_course(self):
+    def test_std_course(self):
         self.assertEqual(StudentTest.student.std_course('SSW810', 'A'), {'SSW810': 'A'})
         self.assertEqual(StudentTest.student.std_course('SSW555', 'A'), {'SSW810': 'A', 'SSW555': 'A'})
-        self.assertEqual(StudentTest.student.get_values(), {'Taken Courses': {'SSW555': 'A', 'SSW810': 'A'}, 
-                                                                'Major': 'SSW', 'Name': 'Rafif, A'})
                
 class InstructorTest(unittest.TestCase):
     instructor = Instructor('98111', 'Maha, A', 'SSW')
@@ -151,18 +195,32 @@ class InstructorTest(unittest.TestCase):
         self.assertEqual(InstructorTest.instructor.name, 'Maha, A')
         self.assertEqual(InstructorTest.instructor.department, 'SSW')
         
-    def test_get_values_and_inst_course(self): 
+    def test_inst_course(self): 
         self.assertEqual(InstructorTest.instructor.inst_course('SSW810'), {'SSW810': 1})
         self.assertEqual(InstructorTest.instructor.inst_course('SSW555'), {'SSW810': 1, 'SSW555': 1})
         self.assertEqual(InstructorTest.instructor.inst_course('SSW555'), {'SSW810': 1, 'SSW555': 2})
-        self.assertEqual(InstructorTest.instructor.get_values(), {'Taught Courses': {'SSW555': 2, 'SSW810': 1}, 
-                                                                    'Department': 'SSW', 'Name': 'Maha, A'})
                                                                     
 class FileReaderTest(unittest.TestCase):
     f = FileReader('/Users/rafifarab/Desktop/Stevens/Fall 2017/SSW 810/students.txt', 3)
     def test_init(self):
         self.assertRaises(FileNotFoundError, FileReader.__init__, FileReaderTest.f, 
                             '/Users/rafifarab/Desktop/Stevens/Fall 2017/SSW 810/w.txt', 3)
+                            
+class MajorTest(unittest.TestCase):
+    student = Major('SSW', 'R', 'SSW810')
+    def test_init(self):
+        self.assertEqual(MajorTest.student.major, 'SSW')
+        self.assertEqual(MajorTest.student.flag, 'R')
+        self.assertEqual(MajorTest.student.course, 'SSW810')
+        
+    def test_add_course(self):
+        self.assertEqual(MajorTest.student.add_course('R', 'SSW810'), {'R': {'SSW810'}})
+        self.assertEqual(MajorTest.student.add_course('R', 'SSW555'), {'R': {'SSW555', 'SSW810'}})
+        self.assertEqual(MajorTest.student.add_course('E', 'CS501'), {'R': {'SSW555', 'SSW810'}, 'E': {'CS501'}})
+
+    def test_remaining_courses(self):
+        completed_course = {'SSW810', 'SSW555', 'CS501'} 
+        self.assertEqual(MajorTest.student.remaining_courses(completed_course), {'R': set(), 'E': ['']})  
         
 if __name__ == '__main__':
         main(), unittest.main(exit = False, verbosity = 2)                                             
